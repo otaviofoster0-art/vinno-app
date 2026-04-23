@@ -1304,6 +1304,18 @@ let currentUser = null;
 let authMode = 'login'; // 'login' | 'signup'
 
 async function initAuth() {
+  // Tratar link de confirmação de e-mail (token na URL)
+  const hash = window.location.hash;
+  if (hash && (hash.includes('access_token') || hash.includes('type=signup') || hash.includes('type=recovery'))) {
+    const { data, error } = await sb.auth.getSession();
+    if (!error && data.session) {
+      currentUser = data.session.user;
+      window.history.replaceState(null, '', window.location.pathname);
+      showApp();
+      return;
+    }
+  }
+
   const { data: { session } } = await sb.auth.getSession();
   if (session?.user) {
     currentUser = session.user;
@@ -1313,8 +1325,9 @@ async function initAuth() {
     document.getElementById('splash').style.display = 'none';
   }
   sb.auth.onAuthStateChange((event, session) => {
-    if (event === 'SIGNED_IN' && session?.user) {
+    if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
       currentUser = session.user;
+      if (event === 'SIGNED_IN') showApp();
     } else if (event === 'SIGNED_OUT') {
       currentUser = null;
     }
@@ -1326,7 +1339,12 @@ function showApp() {
   authEl.classList.add('hide');
   setTimeout(() => { authEl.style.display = 'none'; }, 400);
   document.querySelector('.app').style.display = 'flex';
-  // Atualizar saudação com nome do usuário
+  // Reset state for this user (load their saved data or start fresh)
+  const userId = currentUser?.id;
+  const savedKey = 'vinno2_' + userId;
+  S = { tasted:[], cellar:[], regSrc:'cellar', selWine:null, stars:3, badges:[], photo:null, aiInfo:null, cellarAiInfo:null, following:[], posts:[], postType:'tasting', shelves:null };
+  try { const d = localStorage.getItem(savedKey); if (d) Object.assign(S, JSON.parse(d)); } catch(e) {}
+  S._key = savedKey;
   const name = currentUser?.user_metadata?.name || currentUser?.email?.split('@')[0] || 'você';
   S.userName = name;
   renderHome();
@@ -1399,7 +1417,7 @@ async function handleAuth() {
       'User already registered': 'E-mail já cadastrado. Faça login.',
       'Password should be at least 6 characters': 'Senha deve ter ao menos 6 caracteres.',
     };
-    setAuthError(msgs[err.message] || 'Erro ao autenticar. Tente novamente.');
+    setAuthError(msgs[err.message] || err.message || 'Erro ao autenticar. Tente novamente.');
   } finally {
     if (btn.textContent === 'Aguarde...') {
       btn.textContent = authMode === 'signup' ? 'Criar conta' : 'Entrar';
@@ -1442,8 +1460,8 @@ async function logout() {
 // ── STATE ──
 let S = { tasted:[], cellar:[], regSrc:'cellar', selWine:null, stars:3, badges:[], photo:null, aiInfo:null, cellarAiInfo:null, following:['u1','u3'], posts:[], postType:'tasting', shelves:null };
 
-function load(){ try{ const d=localStorage.getItem('vinno2'); if(d) Object.assign(S, JSON.parse(d)); } catch(e){} }
-function save(){ try{ localStorage.setItem('vinno2', JSON.stringify({tasted:S.tasted,cellar:S.cellar,following:S.following,posts:S.posts,shelves:S.shelves})); } catch(e){} }
+function load(){ /* loading now handled in showApp() per user */ }
+function save(){ try{ const k=S._key||'vinno2'; localStorage.setItem(k, JSON.stringify({tasted:S.tasted,cellar:S.cellar,following:S.following,posts:S.posts,shelves:S.shelves})); } catch(e){} }
 
 // ── DEMO DATA ──
 const USERS = [
@@ -2223,7 +2241,7 @@ function injectVinhedoIcons() {
 
 // ─── FEED ───────────────────────────────────────────────────
 function renderFeed() {
-  const all = [...S.posts, ...DEMO_POSTS];
+  const all = [...S.posts];
   const el  = document.getElementById('feed-posts');
   if (!el) return;
   el.innerHTML = all.length
@@ -2356,7 +2374,7 @@ function renderPost(p) {
 }
 
 function likePost(id) {
-  const all = [...S.posts, ...DEMO_POSTS];
+  const all = [...S.posts];
   const p = all.find(x => x.id===id); if (!p) return;
   p.liked = !p.liked;
   p.likes += p.liked ? 1 : -1;
@@ -2390,7 +2408,7 @@ function toggleCom(id) {
 function addComment(id) {
   const input = document.getElementById('cin-'+id);
   const txt = input?.value.trim(); if (!txt) return;
-  const all = [...S.posts, ...DEMO_POSTS];
+  const all = [...S.posts];
   const p = all.find(x => x.id===id); if (!p) return;
   p.comments = [...(p.comments||[]), {uid:'me', txt}];
   const el = document.getElementById('pc-'+id);
@@ -2478,9 +2496,7 @@ function publishVinhedo(type) {
 }
 
 function renderVinhedo() {
-  const mine = S.posts.filter(p => p.vivinhaType);
-  const community = DEMO_POSTS.filter(p => p.type==='question'||p.vivinhaType);
-  const all = [...mine, ...community];
+  const all = S.posts.filter(p => p.vivinhaType || p.type==='question');
   const el = document.getElementById('vinhedo-posts');
   if (!el) return;
   el.innerHTML = all.length
@@ -2517,33 +2533,24 @@ function renderExplore() {
       </div>
     </div>`).join('');
 
-  // Influenciadores
+  // Influenciadores — sem dados demo
   const iEl = document.getElementById('inf-list');
-  if (iEl) iEl.innerHTML = USERS.filter(u=>u.vip).map(u => `
-    <div class="inf-pill" onclick="openProfile('${u.id}')">
-      <div class="inf-av" style="background:${u.col}">${u.av}</div>
-      <div class="inf-name">${u.name.split(' ')[0]}</div>
-      <div class="inf-vip">✦ ${(u.followers/1000).toFixed(1)}k</div>
-    </div>`).join('');
+  if (iEl) iEl.innerHTML = `<div style="padding:12px 16px;font-size:13px;color:var(--gray)">Em breve.</div>`;
 
   // Amigos
-  const following = USERS.filter(u => S.following.includes(u.id));
   const fcEl = document.getElementById('following-c');
-  if (fcEl) fcEl.textContent = following.length ? following.length+' seguindo' : '';
+  if (fcEl) fcEl.textContent = '';
   const flEl = document.getElementById('following-list');
-  if (flEl) flEl.innerHTML = following.length
-    ? following.map(u => renderExpUserRow(u)).join('')
-    : `<div style="padding:12px 16px;font-size:13px;color:var(--gray)">Você ainda não segue ninguém.</div>`;
+  if (flEl) flEl.innerHTML = `<div style="padding:12px 16px;font-size:13px;color:var(--gray)">Você ainda não segue ninguém.</div>`;
 
-  // Sugeridos
+  // Sugeridos — sem dados demo
   const slEl = document.getElementById('suggested-list');
-  if (slEl) slEl.innerHTML = USERS.filter(u=>!S.following.includes(u.id))
-    .slice(0,4).map(u => renderExpUserRow(u)).join('');
+  if (slEl) slEl.innerHTML = `<div style="padding:12px 16px;font-size:13px;color:var(--gray)">Nenhum usuário sugerido ainda.</div>`;
 }
 
 function renderExpUserRow(u) {
   const isF = S.following.includes(u.id);
-  const posts = [...S.posts,...DEMO_POSTS].filter(p=>p.uid===u.id).length;
+  const posts = S.posts.filter(p=>p.uid===u.id).length;
   return `<div class="exp-user-row" onclick="openProfile('${u.id}')">
     <div class="exp-av" style="background:${u.col};${u.vip?'border:2px solid var(--gold)':''}">${u.av}</div>
     <div class="exp-user-info">
@@ -2560,14 +2567,8 @@ function renderExpUserRow(u) {
 function searchExploreUsers(q) {
   const res = document.getElementById('exp-search-res');
   if (!q.trim()) { res.style.display='none'; return; }
-  const r = USERS.filter(u =>
-    u.name.toLowerCase().includes(q.toLowerCase()) ||
-    u.handle.toLowerCase().includes(q.toLowerCase())
-  );
   res.style.display = 'block';
-  res.innerHTML = r.length
-    ? r.map(u => renderExpUserRow(u)).join('')
-    : `<div style="padding:12px 16px;font-size:13px;color:var(--gray)">Nenhum resultado para "${q}"</div>`;
+  res.innerHTML = `<div style="padding:12px 16px;font-size:13px;color:var(--gray)">Busca de usuários em breve.</div>`;
 }
 
 function toggleFollow(uid, btn) {
@@ -2586,9 +2587,9 @@ function toggleFollow(uid, btn) {
 
 
 function openProfile(uid){
-  const u=USERS.find(x=>x.id===uid); if(!u) return;
   const isF=S.following.includes(uid);
-  const posts=[...S.posts,...DEMO_POSTS].filter(p=>p.uid===uid);
+  const posts=S.posts.filter(p=>p.uid===uid);
+  const u={id:uid,name:'Usuário',handle:'@'+uid,av:'?',col:'#8B1A33',bio:'',followers:0,wines:posts.length,topC:'',vip:false};
   document.getElementById('m-profile-body').innerHTML=`
     <div class="profhero" style="background:${u.col}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
@@ -3306,7 +3307,7 @@ function doAssign(wId, si, slot) {
 }
 
 
-load(); seedIfEmpty();
+load();
 
 // Injetar ícones SVG no nav
 function injectNavIcons(activeId) {
