@@ -936,21 +936,15 @@ async function submitWaitlist(e) {
   btn.disabled = true;
 
   try {
-    // Salvar localmente (fallback quando backend não está configurado ainda)
-    const emails = JSON.parse(localStorage.getItem('vinno_emails') || '[]');
-    if (!emails.includes(email)) {
-      emails.push(email);
-      localStorage.setItem('vinno_emails', JSON.stringify(emails));
-      const count = parseInt(localStorage.getItem('vinno_waitlist_count') || '0');
-      localStorage.setItem('vinno_waitlist_count', String(count + 1));
-    }
-
-    // TODO: quando o backend estiver no ar, enviar para a API:
-    // await fetch('https://vinno-backend.vercel.app/api/waitlist', {
-    //   method: 'POST',
-    //   headers: { 'Content-Type': 'application/json' },
-    //   body: JSON.stringify({ email })
-    // });
+    const res = await fetch('https://backend-three-mu-96.vercel.app/api/waitlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    if (!res.ok) throw new Error('Erro no servidor');
+    const data = await res.json();
+    const count = data.count || 0;
+    localStorage.setItem('vinno_waitlist_count', String(count));
 
     // Sucesso
     btn.textContent = '✓ Na lista!';
